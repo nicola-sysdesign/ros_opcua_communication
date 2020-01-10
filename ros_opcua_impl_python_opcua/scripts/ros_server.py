@@ -40,7 +40,7 @@ class ROSServer:
         self.actionsDict = {}
         rospy.init_node("rosopcua")
         self.server = Server()
-        self.server.set_endpoint("opc.tcp://0.0.0.0:21554/")
+        self.server.set_endpoint("opc.tcp://192.168.2.211:21554/")
         self.server.set_server_name("ROS ua Server")
         self.server.start()
         # setup our own namespaces, this is expected
@@ -57,6 +57,11 @@ class ROSServer:
         topics_object = objects.add_object(idx_topics, "ROS-Topics")
         services_object = objects.add_object(idx_services, "ROS-Services")
         actions_object = objects.add_object(idx_actions, "ROS_Actions")
+
+        # fix B&R compatibility issue
+        node = self.server.get_node(ua.NodeId(2735))
+        node.set_value(0, ua.VariantType.UInt16)
+
         while not rospy.is_shutdown():
             # ros_topics starts a lot of publisher/subscribers, might slow everything down quite a bit.
             ros_services.refresh_services(self.namespace_ros, self, self.servicesDict, idx_services, services_object)
