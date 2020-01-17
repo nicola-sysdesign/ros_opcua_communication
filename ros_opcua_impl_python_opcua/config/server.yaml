@@ -1,0 +1,5 @@
+############
+## Server ##
+############
+endpoint: "opc.tcp://192.168.2.211:21554/"
+name: "ROSServer"

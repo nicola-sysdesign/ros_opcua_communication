@@ -15,6 +15,7 @@ import ros_server
 
 
 class OpcUaROSService:
+
     def __init__(self, server, parent, idx, service_name, service_class):
         self.server = server
         self.name = service_name
@@ -34,10 +35,11 @@ class OpcUaROSService:
         # Build the Array of inputs
         self.sample_req = self._class._request_class()
         self.sample_resp = self._class._response_class()
-        inputs = getargarray(self.sample_req)
-        self.outputs = getargarray(self.sample_resp)
+        inputs = get_arg_array(self.sample_req)
+        self.outputs = get_arg_array(self.sample_resp)
         self.method = self.parent.add_method(idx, self.name, self.call_service, inputs, self.outputs)
         rospy.loginfo("Created ROS Service with name: %s", self.name)
+
 
     @uamethod
     def call_service(self, parent, *inputs):
@@ -46,17 +48,17 @@ class OpcUaROSService:
             input_msg = self.create_message_instance(inputs, self.sample_req)
             rospy.logdebug("Created Input Request for Service " + self.name + " : " + str(input_msg))
             response = self.proxy(input_msg)
-            rospy.logdebug("got response: " + str(response))
+
+            rospy.logdebug("Got response: " + str(response))
             rospy.logdebug("Creating response message object")
-            return_values = []
-            for slot in response.__slots__:
-                rospy.logdebug("Converting slot: " + str(getattr(response, slot)))
-                return_values.append(getattr(response, slot))
-                rospy.logdebug("Current Response list: " + str(return_values))
+            return_values = ros_msg_to_flat_values(response)
+
+            rospy.logdebug("Current Response list: " + str(return_values))
             return return_values
         except (TypeError, rospy.ROSException, rospy.ROSInternalException, rospy.ROSSerializationException,
-                common.uaerrors.UaError, rosservice.ROSServiceException) as e:
-            rospy.logerr("Error when calling service " + self.name, e)
+                common.uaerrors.UaError, rosservice.ROSServiceException) as ex:
+            rospy.logerr("Error when calling service " + self.name, ex)
+
 
     def create_message_instance(self, inputs, sample):
         rospy.logdebug("Creating message for goal call")
@@ -85,6 +87,7 @@ class OpcUaROSService:
 
         return sample
 
+
     def create_object_instance(self, already_set, object, name, counter, inputs, sample):
         rospy.loginfo("Create Object Instance Notify")
         object_counter = 0
@@ -109,6 +112,7 @@ class OpcUaROSService:
         setattr(sample, name, object)
         return already_set, counter
 
+
     def recursive_delete_items(self, item):
         self.proxy.close()
         for child in item.get_children():
@@ -118,6 +122,7 @@ class OpcUaROSService:
             self.server.server.delete_nodes([child])
         self.server.server.delete_nodes([self.method])
         ros_server.own_rosnode_cleanup()
+
 
     def recursive_create_objects(self, name, idx, parent):
         hierachy = name.split('/')
@@ -148,29 +153,47 @@ class OpcUaROSService:
         return parent
 
 
-def getargarray(sample_req):
+def get_arg_array(req):
     array = []
-    for slot_name in sample_req.__slots__:
-        slot = getattr(sample_req, slot_name)
-        if hasattr(slot, '_type'):
-            array_to_merge = getargarray(slot)
+    for slot_name, slot_type in zip(req.__slots__, req._slot_types):
+        rospy.logdebug("converting slot name: '%s' with type: '%s'", slot_name, slot_type)
+        slot_value = getattr(req, slot_name)
+        if hasattr(slot_value, '_type'):
+            array_to_merge = get_arg_array(slot_value)
             array.extend(array_to_merge)
         else:
-            if isinstance(slot, list):
-                arg = ua.Argument()
-                arg.Name = slot_name
-                arg.DataType = ua.NodeId(getobjectidfromtype("array"))
-                arg.ValueRank = -1
-                arg.ArrayDimensions = [1]
-                arg.Description = ua.LocalizedText("Array")
-            else:
-                arg = ua.Argument()
-                arg.Name = slot_name
-                arg.DataType = ua.NodeId(getobjectidfromtype(type(slot).__name__))
-                arg.ValueRank = -1
-                arg.ArrayDimensions = []
-                arg.Description = ua.LocalizedText(slot_name)
+            arg = get_arg_from_slot(slot_name, slot_type)
             array.append(arg)
+
+            # if isinstance(slot, list):
+            #     arg = ua.Argument()
+            #     arg.Name = slot_name
+            #     arg.DataType = ua.NodeId(get_object_id_from_type(type(slot).__name__))
+            #     arg.ValueRank = 1
+            #     arg.ArrayDimensions = [0]
+            #     arg.Description = ua.LocalizedText(slot_name)
+            # else:
+            #     arg = ua.Argument()
+            #     arg.Name = slot_name
+            #     arg.DataType = ua.NodeId(get_object_id_from_type(type(slot).__name__))
+            #     arg.ValueRank = -1
+            #     arg.ArrayDimensions = []
+            #     arg.Description = ua.LocalizedText(slot_name)
+            # array.append(arg)
+
+    return array
+
+
+def ros_msg_to_flat_values(msg):
+    array = []
+    for slot_name, slot_type in zip(msg.__slots__, msg._slot_types):
+        rospy.logdebug("converting slot name: '%s' with type: '%s'", slot_name, slot_type)
+        slot_value = getattr(msg, slot_name)
+        if hasattr(slot_value, '_type'):
+            array_to_merge = ros_msg_to_flat_values(slot_value)
+            array.extend(array_to_merge)
+        else:
+            array.append(slot_value)
 
     return array
 
@@ -207,41 +230,82 @@ def refresh_services(namespace_ros, server, servicesdict, idx, services_object_o
         del servicesdict[name]
 
 
-def getobjectidfromtype(type_name):
-    if type_name == 'bool':
-        dv = ua.ObjectIds.Boolean
-    elif type_name == 'byte':
-        dv = ua.ObjectIds.Byte
-    elif type_name == 'int':
-        dv = ua.ObjectIds.Int16
-    elif type_name == 'int8':
-        dv = ua.ObjectIds.SByte
-    elif type_name == 'uint8':
-        dv = ua.ObjectIds.Byte
-    elif type_name == 'int16':
-        dv = ua.ObjectIds.Int16
+def extract_array_info(type_str):
+    array_size = None
+    if '[' in type_str and type_str[-1] == ']':
+        type_str, array_size_str = type_str.split('[', 1)
+        array_size_str = array_size_str[:-1]
+        if len(array_size_str) > 0:
+            array_size = int(array_size_str)
+        else:
+            array_size = 0
+
+    return type_str, array_size
+
+
+def get_arg_from_slot(slot_name, slot_type):
+
+    type_str, array_size = extract_array_info(slot_type)
+
+    arg = ua.Argument()
+    arg.Name = slot_name
+    arg.Description = ua.LocalizedText(slot_name)
+
+    if type_str == 'bool':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Boolean, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'int8':
+        arg.DataType = ua.NodeId(ua.ObjectIds.SByte, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'byte' or type_str == 'uint8':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Byte, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'int16':
         rospy.roswarn("Int16??")
-    elif type_name == 'uint16':
-        dv = ua.ObjectIds.UInt16
-    elif type_name == 'int32':
-        dv = ua.ObjectIds.Int32
-    elif type_name == 'uint32':
-        dv = ua.ObjectIds.UInt32
-    elif type_name == 'int64':
-        dv = ua.ObjectIds.Int64
-    elif type_name == 'uint64':
-        dv = ua.ObjectIds.UInt64
-    elif type_name == 'float' or type_name == 'float32' or type_name == 'float64':
-        dv = ua.ObjectIds.Float
-    elif type_name == 'double':
-        dv = ua.ObjectIds.Double
-    elif type_name == 'string' or type_name == 'str':
-        dv = ua.ObjectIds.String
-    elif type_name == 'array':
-        dv = ua.ObjectIds.Enumeration
-    elif type_name == 'Time' or type_name == 'time':
-        dv = ua.ObjectIds.Time
+        arg.DataType = ua.NodeId(ua.ObjectIds.Int16, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'uint16':
+        arg.DataType = ua.NodeId(ua.ObjectIds.UInt16, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'int' or type_str == 'int32':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Int32, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'uint32':
+        arg.DataType = ua.NodeId(ua.ObjectIds.UInt32, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'int64':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Int64, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'uint64':
+        arg.DataType = ua.NodeId(ua.ObjectIds.UInt64, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'float' or type_str == 'float32' or type_str == 'float64':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Float, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'double':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Double, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'string':
+        arg.DataType = ua.NodeId(ua.ObjectIds.String, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
+    elif type_str == 'Time' or type_str == 'time':
+        arg.DataType = ua.NodeId(ua.ObjectIds.Time, 0)
+        arg.ValueRank = -1 if array_size is None else 0
+        arg.ArrayDimensions = [] if array_size is None else [array_size]
     else:
-        rospy.logerr("Can't create type with name " + type_name)
+        rospy.logerr("Can't create type with name " + slot_type)
         return None
-    return dv
+
+    return arg

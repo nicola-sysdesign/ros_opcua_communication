@@ -346,7 +346,7 @@ class OpcUaROSAction:
 def get_correct_name(topic_name):
     rospy.logdebug("getting correct name for: " + str(topic_name))
     splits = topic_name.split('/')
-    return string.join(splits[0:-1], '/')
+    return string.join(splits[:-1], '/')
 
 
 def getargarray(goal_class):
@@ -404,19 +404,63 @@ def map_status_to_string(param):
         return "Goal PENDING"
 
 
-def refresh_dict(namespace_ros, actionsdict, topicsdict, server, idx_actions):
-    topics = rospy.get_published_topics(namespace_ros)
-    tobedeleted = []
-    for actionNameOPC in actionsdict:
+def refresh_dict(ros_namespace, actions_dict, server, idx_actions):
+    # get current published topics
+    topics = rospy.get_published_topics(ros_namespace)
+
+    to_be_deleted = []
+    for opcua_action_name in actions_dict:
         found = False
-        for topicROS, topic_type in topics:
+        for topic_name, topic_type in topics:
             ros_server.own_rosnode_cleanup()
-            if actionNameOPC in topicROS:
+            if opcua_action_name in topic_name:
                 found = True
         if not found:
-            actionsdict[actionNameOPC].recursive_delete_items(actionsdict[actionNameOPC].parent)
-            tobedeleted.append(actionNameOPC)
-            rospy.logdebug("deleting action: " + actionNameOPC)
+            actions_dict[opcua_action_name].recursive_delete_items(actions_dict[opcua_action_name].parent)
+            to_be_deleted.append(opcua_action_name)
+            rospy.logdebug("Deleting OPC-UA action: " + opcua_action_name)
             ros_server.own_rosnode_cleanup()
-    for name in tobedeleted:
-        del actionsdict[name]
+    for name in to_be_deleted:
+        del actions_dict[name]
+
+
+def refresh_actions(ros_namespace, server, actions_dict, idx_actions, actions):
+    ros_topics = rospy.get_published_topics(ros_namespace)
+
+    rospy.logdebug(str(ros_topics))
+    rospy.logdebug(str(rospy.get_published_topics('/move_base_simple')))
+
+    for topic_name, topic_type in ros_topics:
+
+        correct_name = ros_actions.get_correct_name(topic_name)
+
+        if topic_name not in actions_dict or actions_dict[topic_name] is None:
+            splits = topic_name.split('/')
+
+            if splits[-1] in ["status", "cancel", "goal", "feedback", "result"]:
+                # rospy.loginfo("Ignoring normal topics for debugging...")
+                action = OpcUaROSAction(server, actions, idx_actions, topic_name, topic_type)
+                action_dict[topic_name] = action
+            else:
+                rospy.logdebug("Found a Topic: %s", str(topic_name))
+                continue
+                # correct_name = ros_actions.get_correct_name(topic_name)
+                # if correct_name not in actionsdict:
+                #     try:
+                #         rospy.loginfo("Creating Action with name: " + correct_name)
+                #         actionsdict[correct_name] = ros_actions.OpcUaROSAction(server,
+                #                                                                actions,
+                #                                                                idx_actions,
+                #                                                                correct_name,
+                #                                                                get_goal_type(correct_name),
+                #                                                                get_feedback_type(correct_name))
+                #     except (ValueError, TypeError, AttributeError) as e:
+                #         print(e)
+                #         rospy.logerr("Error while creating Action Objects for Action " + topic_name)
+
+        elif number_of_subscribers(topic_name, topics_dict) <= 1 and "rosout" not in topic_name:
+            topics_dict[topic_name].recursive_delete_items(server.server.get_node(ua.NodeId(topic_name, idx_topics)))
+            del topics_dict[topic_name]
+            ros_server.own_rosnode_cleanup()
+
+    ros_actions.refresh_dict(ros_namespace, actions_dict, server, idx_actions)
