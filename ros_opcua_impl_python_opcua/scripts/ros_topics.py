@@ -6,13 +6,70 @@ import random
 import numpy
 
 import rospy
+import rostopic
 import roslib
 import roslib.message
 from opcua import ua, uamethod
 
 import ros_server
 import ros_actions
-import rostopic
+import ros_utils
+
+
+
+# use to not get dict changed during iteration errors
+def refresh_dict(ros_namespace, ros_server, topics_dict, idx_topics):
+    # get current published topics
+    ros_topics = rospy.get_published_topics(ros_namespace)
+
+    to_be_deleted = []
+    for node_name in topics_dict:
+        # search if node_name is in ros_topics
+        found = False
+        for topic_name, topic_type in ros_topics:
+            if node_name == topic_name:
+                found = True
+        # if not found delete it
+        if not found:
+            topics_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx_topics)))
+            to_be_deleted.append(node_name)
+
+    for topic_name in to_be_deleted:
+        del topics_dict[topic_name]
+
+
+def refresh_topics(ros_namespace, ros_server, topics_dict, idx_topics, topics_object):
+    ros_topics = rospy.get_published_topics(ros_namespace)
+
+    # rospy.logdebug(str(topics))
+    # rospy.logdebug(str(rospy.get_published_topics('/move_base_simple')))
+
+    for topic_name, topic_type in ros_topics:
+
+        if topic_name not in topics_dict or topics_dict[topic_name] is None:
+            # splits = topic_name.split('/')
+
+            # if splits[-1] not in ["status", "cancel", "goal", "feedback", "result"]:
+                # rospy.loginfo("Ignoring normal topics for debugging...")
+            opcua_topic = OpcUaROSTopic(ros_server, topics_object, idx_topics, topic_name, topic_type)
+            topics_dict[topic_name] = opcua_topic
+
+        elif number_of_subscribers(topic_name, topics_dict) <= 1 and "rosout" not in node_name:
+            topics_dict[topic_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(topic_name, idx_topics)))
+            del topics_dict[topic_name]
+            ros_server.own_rosnode_cleanup()
+
+    refresh_dict(ros_namespace, ros_server, topics_dict, idx_topics)
+
+
+# Used to delete obsolete topics
+def number_of_subscribers(node_name, topics_dict):
+    # rosout only has one subscriber/publisher at all times, so ignore.
+    if node_name != "/rosout":
+        ret = topics_dict[node_name]._subscriber.get_num_connections()
+    else:
+        ret = 2
+    return ret
 
 
 class OpcUaROSTopic:
@@ -20,144 +77,161 @@ class OpcUaROSTopic:
     def __init__(self, server, parent, idx, topic_name, topic_type):
         self.server = server
         self.parent = self.recursive_create_objects(topic_name, idx, parent)
-        self.type_name = topic_type
-        self.name = topic_name
-        self._nodes = {}
         self.idx = idx
+        self.nodes = {}
 
-        self.message_class = None
+        self.topic_name = topic_name
+        self.topic_type = topic_type
+
         try:
-            self.message_class = roslib.message.get_message_class(topic_type)
-            self.message_instance = self.message_class()
-
+            self.msg_class = roslib.message.get_message_class(topic_type)
+            self.msg_instance = self.msg_class()
         except rospy.ROSException:
-            self.message_class = None
-            rospy.logfatal("Couldn't find message class for type " + topic_type)
+            rospy.logfatal("Couldn't find message class for type '%s'", topic_type)
+            return
 
-        self._recursive_create_items(self.parent, idx, topic_name, topic_type, self.message_instance, True)
+        self.recursive_create_node(self.parent, idx, self.topic_name, self.topic_type, self.msg_instance, True)
 
-        self._subscriber = rospy.Subscriber(self.name, self.message_class, self.message_callback)
-        self._publisher = rospy.Publisher(self.name, self.message_class, queue_size=1)
-        rospy.loginfo("Created ROS Topic with name: " + str(self.name))
+        self._subscriber = rospy.Subscriber(self.topic_name, roslib.message.get_message_class(topic_type), self.message_callback)
+        self._publisher = rospy.Publisher(self.topic_name, roslib.message.get_message_class(topic_type), queue_size=1)
+        rospy.loginfo("Created ROS Topic with name: '%s'", str(self.topic_name))
 
 
-    def _recursive_create_items(self, parent, idx, topic_name, type_name, message, top_level=False):
-        topic_text = topic_name.split('/')[-1]
-        if '[' in topic_text:
-            topic_text = topic_text[topic_text.index('['):]
+    def recursive_create_node(self, parent, idx, name, type_name, msg, top_level=False):
+        qname = name.split('/')[-1]
+        # if '[' in topic_text:
+        #     topic_text = topic_text[topic_text.index('['):]
 
-        # This here are 'complex datatypes'
-        if hasattr(message, '__slots__') and hasattr(message, '_slot_types'):
-            complex_type = True
-            new_node = parent.add_object(ua.NodeId(topic_name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
-                                         ua.QualifiedName(topic_name, parent.nodeid.NamespaceIndex))
-            new_node.add_property(ua.NodeId(topic_name + ".Type", idx),
-                                  ua.QualifiedName("Type", parent.nodeid.NamespaceIndex), type_name)
+        if hasattr(msg, '__slots__') and hasattr(msg, '_slot_types'):
+            # compley type
+            child = parent.add_object(ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
+                                      ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
+            #
+            child.add_property(ua.NodeId(name + ".Type", idx),
+                               ua.QualifiedName("Type", parent.nodeid.NamespaceIndex), type_name)
+            #
             if top_level:
-                new_node.add_method(ua.NodeId(topic_name + ".Update", parent.nodeid.NamespaceIndex),
-                                    ua.QualifiedName("Update", parent.nodeid.NamespaceIndex),
-                                    self.opcua_update_callback, [], [])
-            for slot_name, type_name_child in zip(message.__slots__, message._slot_types):
-                self._recursive_create_items(new_node, idx, topic_name + '/' + slot_name, type_name_child, getattr(message, slot_name))
-            self._nodes[topic_name] = new_node
+                child.add_method(ua.NodeId(name + ".Update", parent.nodeid.NamespaceIndex),
+                                 ua.QualifiedName("Update", parent.nodeid.NamespaceIndex),
+                                 self.opcua_update_callback, [], [])
+            #
+            for slot_name, slot_type in zip(msg.__slots__, msg._slot_types):
+                self.recursive_create_node(child, idx, name + '/' + slot_name, slot_type, getattr(msg, slot_name))
+            #
+            self.nodes[name] = child
+
         else:
-            # This are arrays
-            base_type_str, array_size = extract_array_info(type_name)
+
+            base_type_str, array_size = ros_utils.extract_array_info(type_name)
+
             try:
-                base_instance = roslib.message.get_message_class(base_type_str)()
+                base_class = roslib.message.get_message_class(base_type_str)
+                base_instance = base_class()
             except (ValueError, TypeError):
                 base_instance = None
 
             if array_size is not None and hasattr(base_instance, '__slots__'):
                 for index in range(array_size):
-                    self._recursive_create_items(parent, idx, topic_name + '[%d]' % index, base_type_str, base_instance)
+                    self.recursive_create_node(parent, idx, name + '[%d]' % index, base_type_str, base_instance)
             else:
-                node_variable = create_topic_variable(parent, idx, topic_name, topic_text, type_name)
-                self._nodes[topic_name] = node_variable
+                node = create_node_variable(parent, name, qname, type_name)
+                node.set_writable(True)
+                self.nodes[name] = node
 
-        if topic_name in self._nodes and self._nodes[topic_name].get_node_class() == ua.NodeClass.Variable:
-            self._nodes[topic_name].set_writable(True)
         return
 
 
+    def recursive_delete_node(self, node):
+        # Unsubscribe OPC-UA node from ros topic
+        self._publisher.unregister()
+        self._subscriber.unregister()
+
+        # delete children
+        for child in node.get_children():
+            self.recursive_delete_node(child)
+            if child in self.nodes:
+                del self.nodes[child]
+            self.server.server.delete_nodes([child])
+
+        # delete the node
+        self.server.server.delete_nodes([node])
+
+        # if parent have no children delete it
+        if len(self.parent.get_children()) == 0:
+            self.server.server.delete_nodes([self.parent])
+
+
     def message_callback(self, msg):
-        self.update_value(self.name, msg)
+        self.update_value(self.topic_name, msg)
 
 
     @uamethod
     def opcua_update_callback(self, parent):
         try:
-            for nodeName in self._nodes:
-                child = self._nodes[nodeName]
+            for node_key in self.nodes.keys():
+                child = self.nodes[node_key]
                 name = child.get_display_name().Text
-                if hasattr(self.message_instance, name):
+                if hasattr(self.msg_instance, name):
                     if child.get_node_class() == ua.NodeClass.Variable:
-                        setattr(self.message_instance, name,
-                                correct_type(child, type(getattr(self.message_instance, name))))
-                    elif child.get_node_class == ua.NodeClass.Object:
-                        setattr(self.message_instance, name, self.create_message_instance(child))
-            self._publisher.publish(self.message_instance)
-        except rospy.ROSException as e:
-            rospy.logerr("Error when updating node " + self.name, e)
+                        print child.get_value()
+                        setattr(self.msg_instance, name, child.get_value())
+                        # correct_type(child, type(getattr(self.msg_instance, name))))
+                    elif child.get_node_class() == ua.NodeClass.Object:
+                        setattr(self.msg_instance, name, self.create_msg_instance(child))
+            # publish msg
+            self._publisher.publish(self.msg_instance)
+        except rospy.ROSException as ex:
+            rospy.logerr("Error while updating OPC-UA node: '%s'", self.topic_name, ex)
             self.server.server.delete_nodes([self.parent])
 
 
-    def update_value(self, topic_name, msg):
+    def update_value(self, node_name, msg):
 
         if hasattr(msg, '__slots__') and hasattr(msg, '_slot_types'):
             # complex type
             for slot_name, slot_type in zip(msg.__slots__, msg._slot_types):
-                self.update_value(topic_name + '/' + slot_name, getattr(msg, slot_name))
+                self.update_value(node_name + '/' + slot_name, getattr(msg, slot_name))
             return
 
         if type(msg) in (list, tuple):
+
             if len(msg) > 0 and hasattr(msg[0], '__slots__'):
                 # complex type array
                 for index, slot in enumerate(msg):
-                    if topic_name + '[%d]' % index in self._nodes:
-                        self.update_value(topic_name + '[%d]' % index, slot)
+                    if node_name + '[%d]' % index in self.nodes:
+                        self.update_value(node_name + '[%d]' % index, slot)
                     else:
-                        if topic_name in self._nodes:
-                            base_type_str, array_size = extract_array_info(self._nodes[topic_name].text(self.type_name))
-                            self._recursive_create_items(self._nodes[topic_name], topic_name + '[%d]' % index, base_type_str, slot, None)
+                        if node_name in self.nodes:
+                            base_type_str, array_size = ros_utils.extract_array_info(self.nodes[node_name].text(self.type_name))
+                            self.recursive_create_node(self.nodes[node_name], node_name + '[%d]' % index, base_type_str, slot, None)
+
                 # remove obsolete children
-                if topic_name in self._nodes:
-                    if len(message) < len(self._nodes[topic_name].get_children()):
-                        for i in range(len(msg), self._nodes[topic_name].childCount()):
-                            item_topic_name = topic_name + '[%d]' % i
-                            self.recursive_delete_items(self._nodes[item_topic_name])
-                            del self._nodes[item_topic_name]
+                if node_name in self.nodes:
+
+                    if len(msg) < len(self.nodes[node_name].get_children()):
+
+                        for i in range(len(msg), len(self.nodes[node_name].get_children())):
+                            self.recursive_delete_node(self.nodes[node_name + '[%d]' % i])
+                            del self.nodes[node_name + '[%d]' % i]
                 return
+
         # simple type or simple type array
-        if topic_name in self._nodes and self._nodes[topic_name] is not None:
-            node = self._nodes[topic_name]
+        if node_name in self.nodes and self.nodes[node_name] is not None:
+            node = self.nodes[node_name]
             dv = ua.Variant(msg, node.get_data_type_as_variant_type())
             node.set_value(dv)
 
 
-    def recursive_delete_items(self, item):
-        self._publisher.unregister()
-        self._subscriber.unregister()
-        for child in item.get_children():
-            self.recursive_delete_items(child)
-            if child in self._nodes:
-                del self._nodes[child]
-            self.server.server.delete_nodes([child])
-        self.server.server.delete_nodes([item])
-        if len(self.parent.get_children()) == 0:
-            self.server.server.delete_nodes([self.parent])
-
-
-    def create_message_instance(self, node):
+    def create_msg_instance(self, node):
         for child in node.get_children():
             name = child.get_display_name().Text
-            if hasattr(self.message_instance, name):
+            if hasattr(self.msg_instance, name):
                 if child.get_node_class() == ua.NodeClass.Variable:
-                    setattr(self.message_instance, name,
-                            correct_type(child, type(getattr(self.message_instance, name))))
+                    setattr(self.msg_instance, name,
+                            correct_type(child, type(getattr(self.msg_instance, name))))
                 elif child.get_node_class == ua.NodeClass.Object:
-                    setattr(self.message_instance, name, self.create_message_instance(child))
-        return self.message_instance  # Converts the value of the node to that specified in the ros message we are trying to fill. Casts python ints
+                    setattr(self.msg_instance, name, self.create_msg_instance(child))
+        return self.msg_instance  # Converts the value of the node to that specified in the ros message we are trying to fill. Casts python ints
 
 
     def recursive_create_objects(self, topic_name, idx, parent):
@@ -167,22 +241,22 @@ class OpcUaROSTopic:
         for name in hierachy:
             if name != '':
                 try:
-                    nodewithsamename = self.server.find_topics_node_with_same_name(name, idx)
-                    if nodewithsamename is not None:
-                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, nodewithsamename)
+                    node_with_same_name = self.server.find_topics_node_with_same_name(name, idx)
+                    if node_with_same_name is not None:
+                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, node_with_same_name)
                     else:
                         # if for some reason 2 services with exactly same name are created use hack>: add random int, prob to hit two
                         # same ints 1/10000, should be sufficient
-                        newparent = parent.add_object(
+                        new_parent = parent.add_object(
                             ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
                             ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
-                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, newparent)
+                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, new_parent)
                 # thrown when node with parent name is not existent in server
                 except IndexError, common.UaError:
-                    newparent = parent.add_object(
+                    new_parent = parent.add_object(
                         ua.NodeId(name + str(random.randint(0, 10000)), parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
                         ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
-                    return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, newparent)
+                    return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, new_parent)
 
         return parent
 
@@ -205,23 +279,10 @@ def correct_type(node, typemessage):
     return result
 
 
-def extract_array_info(type_str):
-    array_size = None
-    if '[' in type_str and type_str[-1] == ']':
-        type_str, array_size_str = type_str.split('[', 1)
-        array_size_str = array_size_str[:-1]
-        if len(array_size_str) > 0:
-            array_size = int(array_size_str)
-        else:
-            array_size = 0
+def create_node_variable(parent, name, qname, type_name):
+    rospy.logdebug("Creating node variable: '%s' with type_name: '%s'", name, type_name)
 
-    return type_str, array_size
-
-
-def create_topic_variable(parent, idx, topic_name, topic_text, type_name):
-    rospy.logdebug("Creating topic variable: '%s' with type_name: '%s'", topic_name, type_name)
-
-    base_type_str, array_size = extract_array_info(type_name)
+    base_type_str, array_size = ros_utils.extract_array_info(type_name)
 
     if base_type_str == 'bool':
         dv = ua.Variant(False, ua.VariantType.Boolean)  if array_size is None else ua.Variant([], ua.VariantType.Boolean)
@@ -263,100 +324,7 @@ def create_topic_variable(parent, idx, topic_name, topic_text, type_name):
         rospy.logerr("can't create node with type %s", str(base_type_str))
         return None
 
-    node = parent.add_variable(ua.NodeId(topic_name, parent.nodeid.NamespaceIndex),
-                               ua.QualifiedName(topic_text, parent.nodeid.NamespaceIndex),
+    node = parent.add_variable(ua.NodeId(name, parent.nodeid.NamespaceIndex),
+                               ua.QualifiedName(qname, parent.nodeid.NamespaceIndex),
                                val=dv, datatype=dt)
     return node
-
-# Used to delete obsolete topics
-def number_of_subscribers(nametolookfor, topicsDict):
-    # rosout only has one subscriber/publisher at all times, so ignore.
-    if nametolookfor != "/rosout":
-        ret = topicsDict[nametolookfor]._subscriber.get_num_connections()
-    else:
-        ret = 2
-    return ret
-
-
-# use to not get dict changed during iteration errors
-def refresh_dict(ros_namespace, topics_dict, server, idx_topics):
-    # get current published topics
-    topics = rospy.get_published_topics(ros_namespace)
-
-    to_be_deleted = []
-    for opcua_topic_name in topics_dict:
-        found = False
-        for topic_name, topic_type in topics:
-            if opcua_topic_name == topic_name:
-                found = True
-        if not found:
-            topics_dict[opcua_topic_name].recursive_delete_items(server.get_node(ua.NodeId(opcua_topic_name, idx_topics)))
-            to_be_deleted.append(opcua_topic_name)
-    for name in to_be_deleted:
-        del topics_dict[name]
-
-
-def refresh_topics(ros_namespace, server, topics_dict, idx_topics, topics):
-    ros_topics = rospy.get_published_topics(ros_namespace)
-
-    rospy.logdebug(str(ros_topics))
-    rospy.logdebug(str(rospy.get_published_topics('/move_base_simple')))
-
-    for topic_name, topic_type in ros_topics:
-
-        if topic_name not in topics_dict or topics_dict[topic_name] is None:
-            splits = topic_name.split('/')
-
-            if splits[-1] not in ["status", "cancel", "goal", "feedback", "result"]:
-                # rospy.loginfo("Ignoring normal topics for debugging...")
-                topic = OpcUaROSTopic(server, topics, idx_topics, topic_name, topic_type)
-                topics_dict[topic_name] = topic
-            else:
-                rospy.logdebug("Found an action: %s", str(topic_name))
-                continue
-                # correct_name = ros_actions.get_correct_name(topic_name)
-                # if correct_name not in actionsdict:
-                #     try:
-                #         rospy.loginfo("Creating Action with name: " + correct_name)
-                #         actionsdict[correct_name] = ros_actions.OpcUaROSAction(server,
-                #                                                                actions,
-                #                                                                idx_actions,
-                #                                                                correct_name,
-                #                                                                get_goal_type(correct_name),
-                #                                                                get_feedback_type(correct_name))
-                #     except (ValueError, TypeError, AttributeError) as e:
-                #         print(e)
-                #         rospy.logerr("Error while creating Action Objects for Action " + topic_name)
-
-        elif number_of_subscribers(topic_name, topics_dict) <= 1 and "rosout" not in topic_name:
-            topics_dict[topic_name].recursive_delete_items(server.server.get_node(ua.NodeId(topic_name, idx_topics)))
-            del topics_dict[topic_name]
-            ros_server.own_rosnode_cleanup()
-
-    ros_topics.refresh_dict(ros_namespace, topics_dict, server, idx_topics)
-
-
-def get_feedback_type(action_name):
-    try:
-        type, name, fn = rostopic.get_topic_type(action_name + "/feedback")
-        return type
-    except rospy.ROSException as e:
-        try:
-            type, name, fn = rostopic.get_topic_type(action_name + "/Feedback", e)
-            return type
-        except rospy.ROSException as e2:
-            rospy.logerr("Couldn't find feedback type for action " + action_name, e2)
-            return None
-
-
-def get_goal_type(action_name):
-    try:
-        type, name, fn = rostopic.get_topic_type(action_name + "/goal")
-        return type
-    except rospy.ROSException as e:
-        try:
-            type, name, fn = rostopic.get_topic_type(action_name + "/Goal", e)
-            return type
-        except rospy.ROSException as e2:
-            rospy.logerr("Couldn't find goal type for action " + action_name, e2)
-            return None

@@ -7,10 +7,11 @@ import rosgraph
 import rosnode
 
 import opcua
-from opcua import Server, ua
+from opcua import ua
 
 import ros_services
 import ros_topics
+import ros_actions
 
 
 # Returns the hierachy as one string from the first remaining part on.
@@ -133,7 +134,7 @@ if __name__ == '__main__':
         # ros_topics starts a lot of publisher/subscribers, might slow everything down quite a bit.
         ros_services.refresh_services(ros_server.ros_namespace, ros_server, ros_server.services_dict, ros_server.idx_services, ros_server.services_object)
         ros_topics.refresh_topics(ros_server.ros_namespace, ros_server, ros_server.topics_dict, ros_server.idx_topics, ros_server.topics_object)
-        # ros_actions.refresh_actions(ros_namespace, self, actions_dict, idx_actions, actions_object)
+        # ros_actions.refresh_actions(ros_server.ros_namespace, ros_server, ros_server.actions_dict, ros_server.idx_actions, ros_server.actions_object)
 
         rate.sleep()
 
