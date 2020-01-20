@@ -18,7 +18,7 @@ import ros_utils
 
 
 # use to not get dict changed during iteration errors
-def refresh_dict(ros_namespace, ros_server, topics_dict, idx_topics):
+def refresh_dict(ros_namespace, ros_server, topics_dict, idx):
     # get current published topics
     ros_topics = rospy.get_published_topics(ros_namespace)
 
@@ -31,14 +31,14 @@ def refresh_dict(ros_namespace, ros_server, topics_dict, idx_topics):
                 found = True
         # if not found delete it
         if not found:
-            topics_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx_topics)))
+            topics_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx)))
             to_be_deleted.append(node_name)
 
     for topic_name in to_be_deleted:
         del topics_dict[topic_name]
 
 
-def refresh_topics(ros_namespace, ros_server, topics_dict, idx_topics, topics_object):
+def refresh_topics(ros_namespace, ros_server, topics_dict, idx, topics_object):
     ros_topics = rospy.get_published_topics(ros_namespace)
 
     # rospy.logdebug(str(topics))
@@ -51,7 +51,7 @@ def refresh_topics(ros_namespace, ros_server, topics_dict, idx_topics, topics_ob
 
             # if splits[-1] not in ["status", "cancel", "goal", "feedback", "result"]:
                 # rospy.loginfo("Ignoring normal topics for debugging...")
-            opcua_topic = OpcUaROSTopic(ros_server, topics_object, idx_topics, topic_name, topic_type)
+            opcua_topic = OpcUaROSTopic(ros_server, topics_object, idx, topic_name, topic_type)
             topics_dict[topic_name] = opcua_topic
 
         elif number_of_subscribers(topic_name, topics_dict) <= 1 and "rosout" not in node_name:
@@ -59,14 +59,14 @@ def refresh_topics(ros_namespace, ros_server, topics_dict, idx_topics, topics_ob
             del topics_dict[topic_name]
             ros_server.own_rosnode_cleanup()
 
-    refresh_dict(ros_namespace, ros_server, topics_dict, idx_topics)
+    refresh_dict(ros_namespace, ros_server, topics_dict, idx)
 
 
 # Used to delete obsolete topics
 def number_of_subscribers(node_name, topics_dict):
     # rosout only has one subscriber/publisher at all times, so ignore.
     if node_name != "/rosout":
-        ret = topics_dict[node_name]._subscriber.get_num_connections()
+        ret = topics_dict[node_name].subscriber.get_num_connections()
     else:
         ret = 2
     return ret
@@ -74,9 +74,9 @@ def number_of_subscribers(node_name, topics_dict):
 
 class OpcUaROSTopic:
 
-    def __init__(self, server, parent, idx, topic_name, topic_type):
-        self.server = server
-        self.parent = self.recursive_create_objects(topic_name, idx, parent)
+    def __init__(self, ros_server, parent, idx, topic_name, topic_type):
+        self.server = ros_server
+        self.parent = parent # self.recursive_create_objects(parent, idx, topic_name)
         self.idx = idx
         self.nodes = {}
 
@@ -92,9 +92,37 @@ class OpcUaROSTopic:
 
         self.recursive_create_node(self.parent, idx, self.topic_name, self.topic_type, self.msg_instance, True)
 
-        self._subscriber = rospy.Subscriber(self.topic_name, roslib.message.get_message_class(topic_type), self.message_callback)
-        self._publisher = rospy.Publisher(self.topic_name, roslib.message.get_message_class(topic_type), queue_size=1)
-        rospy.loginfo("Created ROS Topic with name: '%s'", str(self.topic_name))
+        self.subscriber = rospy.Subscriber(self.topic_name, roslib.message.get_message_class(topic_type), self.message_callback)
+        self.publisher  = rospy.Publisher(self.topic_name, roslib.message.get_message_class(topic_type), queue_size=1)
+
+        rospy.loginfo("Created ROS Topic: '%s'", self.topic_name)
+
+
+    def recursive_create_objects(self, parent, idx, topic_name):
+        hierachy = topic_name.split('/')
+        if len(hierachy) == 0 or len(hierachy) == 1:
+            return parent
+
+        for name in hierachy:
+            if name != '':
+                try:
+                    node_with_same_name = self.server.find_topics_node_with_same_name(name, idx)
+                    if node_with_same_name is not None:
+                        return self.recursive_create_objects(node_with_same_name, idx, ros_server.nextname(hierachy, hierachy.index(name)))
+                    else:
+                        child = parent.add_object(
+                            ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
+                            ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
+                        return self.recursive_create_objects(child, idx, ros_server.nextname(hierachy, hierachy.index(name)))
+                except IndexError, common.UaError:
+                    # if for some reason 2 services with exactly same name are created use hack>: add random int, prob to hit two
+                    # same ints 1/10000, should be sufficient
+                    child = parent.add_object(
+                        ua.NodeId(name + str(random.randint(0, 10000)), parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
+                        ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
+                    return self.recursive_create_objects(child, idx, ros_server.nextname(hierachy, hierachy.index(name)))
+
+        return parent
 
 
     def recursive_create_node(self, parent, idx, name, type_name, msg, top_level=False):
@@ -143,8 +171,8 @@ class OpcUaROSTopic:
 
     def recursive_delete_node(self, node):
         # Unsubscribe OPC-UA node from ros topic
-        self._publisher.unregister()
-        self._subscriber.unregister()
+        self.publisher.unregister()
+        self.subscriber.unregister()
 
         # delete children
         for child in node.get_children():
@@ -179,7 +207,7 @@ class OpcUaROSTopic:
                     elif child.get_node_class() == ua.NodeClass.Object:
                         setattr(self.msg_instance, name, self.create_msg_instance(child))
             # publish msg
-            self._publisher.publish(self.msg_instance)
+            self.publisher.publish(self.msg_instance)
         except rospy.ROSException as ex:
             rospy.logerr("Error while updating OPC-UA node: '%s'", self.topic_name, ex)
             self.server.server.delete_nodes([self.parent])
@@ -232,33 +260,6 @@ class OpcUaROSTopic:
                 elif child.get_node_class == ua.NodeClass.Object:
                     setattr(self.msg_instance, name, self.create_msg_instance(child))
         return self.msg_instance  # Converts the value of the node to that specified in the ros message we are trying to fill. Casts python ints
-
-
-    def recursive_create_objects(self, topic_name, idx, parent):
-        hierachy = topic_name.split('/')
-        if len(hierachy) == 0 or len(hierachy) == 1:
-            return parent
-        for name in hierachy:
-            if name != '':
-                try:
-                    node_with_same_name = self.server.find_topics_node_with_same_name(name, idx)
-                    if node_with_same_name is not None:
-                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, node_with_same_name)
-                    else:
-                        # if for some reason 2 services with exactly same name are created use hack>: add random int, prob to hit two
-                        # same ints 1/10000, should be sufficient
-                        new_parent = parent.add_object(
-                            ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
-                            ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
-                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, new_parent)
-                # thrown when node with parent name is not existent in server
-                except IndexError, common.UaError:
-                    new_parent = parent.add_object(
-                        ua.NodeId(name + str(random.randint(0, 10000)), parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
-                        ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
-                    return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, new_parent)
-
-        return parent
 
 
 # to unsigned integers as to fulfill ros specification. Currently only uses a few different types,
