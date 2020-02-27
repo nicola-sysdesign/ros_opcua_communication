@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # Thanks to:
 # https://github.com/ros-visualization/rqt_common_plugins/blob/groovy-devel/rqt_service_caller/src/rqt_service_caller/service_caller_widget.py
 import math
@@ -17,142 +15,61 @@ import ros_utils
 
 
 def refresh_dict(ros_namespace, ros_server, services_dict, idx):
-    # get current provided services
     ros_services = rosservice.get_service_list()
 
     to_be_deleted = []
     for node_name in services_dict:
-        #
-        found = False
-        for service_name in ros_services:
-            if node_name == service_name:
-                found = True
-        #
-        if not found and services_dict[node_name] is not None:
-            services_dict[node_name].recursive_delete_nodes(ros_server.server.get_node(ua.NodeId(node_name, idx)))
+
+        if node_name not in ros_services:
+
+            services_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx)))
+
+            if len(services_dict[node_name].parent.get_children()) == 0:
+                ros_server.server.delete_nodes([services_dict[node_name].parent])
+
             to_be_deleted.append(node_name)
-        #
-        if len(services_dict[node_name].parent.get_children()) == 0:
-            ros_server.server.delete_nodes([services_dict[node_name].parent])
 
     for node_name in to_be_deleted:
         del services_dict[node_name]
 
 
+    # for node_name in services_dict:
+    #     #
+    #     found = False
+    #     for service_name in ros_services:
+    #         if node_name == service_name:
+    #             found = True
+    #     #
+    #     if not found and services_dict[node_name] is not None:
+    #         services_dict[node_name].recursive_delete_nodes(ros_server.server.get_node(ua.NodeId(node_name, idx)))
+    #         to_be_deleted.append(node_name)
+    #     #
+    #     if len(services_dict[node_name].parent.get_children()) == 0:
+    #         ros_server.server.delete_nodes([services_dict[node_name].parent])
+    #
+    # for node_name in to_be_deleted:
+    #     del services_dict[node_name]
+
+
 def refresh_services(ros_namespace, ros_server, services_dict, idx, services_object):
     ros_services = rosservice.get_service_list(namespace=ros_namespace)
 
+    #
     for service_name in ros_services:
+
+        if service_name not in ros_server.filter_services:
+            continue
+
         try:
             if service_name not in services_dict or services_dict[service_name] is None:
                 opcua_service = OpcUaROSService(ros_server, services_object, idx, service_name, rosservice.get_service_type(service_name))
                 services_dict[service_name] = opcua_service
         except (rosservice.ROSServiceException, rosservice.ROSServiceIOException) as ex:
-            try:
-                rospy.logerr("Error when trying to refresh services", ex)
-            except TypeError as e2:
-                rospy.logerr("Error when logging an Exception, can't convert everything to string")
+            rospy.logerr("Error when trying to refresh services", ex)
+        except TypeError as ex:
+            rospy.logerr("Error when logging an Exception, can't convert everything to string")
 
     refresh_dict(ros_namespace, ros_server, services_dict, idx)
-
-
-def get_arg_array(req):
-    array = []
-    for slot_name, slot_type in zip(req.__slots__, req._slot_types):
-        rospy.logdebug("converting slot name: '%s' with type: '%s'", slot_name, slot_type)
-        slot_value = getattr(req, slot_name)
-        if hasattr(slot_value, '_type'):
-            array_to_merge = get_arg_array(slot_value)
-            array.extend(array_to_merge)
-        else:
-            arg = get_arg_from_slot(slot_name, slot_type)
-            array.append(arg)
-
-            # if isinstance(slot, list):
-            #     arg = ua.Argument()
-            #     arg.Name = slot_name
-            #     arg.DataType = ua.NodeId(get_object_id_from_type(type(slot).__name__))
-            #     arg.ValueRank = 1
-            #     arg.ArrayDimensions = [0]
-            #     arg.Description = ua.LocalizedText(slot_name)
-            # else:
-            #     arg = ua.Argument()
-            #     arg.Name = slot_name
-            #     arg.DataType = ua.NodeId(get_object_id_from_type(type(slot).__name__))
-            #     arg.ValueRank = -1
-            #     arg.ArrayDimensions = []
-            #     arg.Description = ua.LocalizedText(slot_name)
-            # array.append(arg)
-
-    return array
-
-
-def get_arg_from_slot(slot_name, slot_type):
-
-    type_str, array_size = extract_array_info(slot_type)
-
-    arg = ua.Argument()
-    arg.Name = slot_name
-    arg.Description = ua.LocalizedText(slot_name)
-
-    if type_str == 'bool':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Boolean, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'int8':
-        arg.DataType = ua.NodeId(ua.ObjectIds.SByte, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'byte' or type_str == 'uint8':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Byte, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'int16':
-        rospy.roswarn("Int16??")
-        arg.DataType = ua.NodeId(ua.ObjectIds.Int16, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'uint16':
-        arg.DataType = ua.NodeId(ua.ObjectIds.UInt16, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'int' or type_str == 'int32':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Int32, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'uint32':
-        arg.DataType = ua.NodeId(ua.ObjectIds.UInt32, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'int64':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Int64, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'uint64':
-        arg.DataType = ua.NodeId(ua.ObjectIds.UInt64, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'float' or type_str == 'float32' or type_str == 'float64':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Float, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'double':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Double, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'string':
-        arg.DataType = ua.NodeId(ua.ObjectIds.String, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    elif type_str == 'Time' or type_str == 'time':
-        arg.DataType = ua.NodeId(ua.ObjectIds.Time, 0)
-        arg.ValueRank = -1 if array_size is None else 0
-        arg.ArrayDimensions = [] if array_size is None else [array_size]
-    else:
-        rospy.logerr("Can't create type with name " + slot_type)
-        return None
-
-    return arg
 
 
 class OpcUaROSService:
@@ -190,122 +107,86 @@ class OpcUaROSService:
         # del self._eval_locals['__doc__']
 
         # Build the Array of inputs
-        # self.srv_class_req = self.srv_class._request_class()
-        # self.srv_class_res = self.srv_class._response_class()
-        self.inputs  = get_arg_array(self.srv_class._request_class())
-        self.outputs = get_arg_array(self.srv_class._response_class())
-        self.method = self.parent.add_method(idx, self.service_name, self.call_service, self.inputs, self.outputs)
+        self.req_class = self.srv_class._request_class()
+        self.res_class = self.srv_class._response_class()
+        self.inputs  = ros_utils.ros_msg_to_arguments(self.srv_class._request_class())
+        self.outputs = ros_utils.ros_msg_to_arguments(self.srv_class._response_class())
+
+        name = self.service_name
+        qname = self.service_name.split('/')[-1]
+        self.method = self.parent.add_method(ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
+                                             ua.QualifiedName(name, parent.nodeid.NamespaceIndex),
+                                             self.call_service, self.inputs, self.outputs)
 
         rospy.loginfo("Created ROS Service: %s", self.service_name)
 
 
     def recursive_create_objects(self, name, idx, parent):
         hierachy = name.split('/')
+
         if len(hierachy) == 0 or len(hierachy) == 1:
             return parent
+
         for name in hierachy:
             if name != '':
                 try:
-                    nodewithsamename = self.server.find_service_node_with_same_name(name, idx)
-                    rospy.logdebug("nodewithsamename for name: " + str(name) + " is : " + str(nodewithsamename))
-                    if nodewithsamename is not None:
+                    node_with_same_name = self.server.find_service_node_with_same_name(name, idx)
+                    rospy.logdebug("node_with_same_name for name: " + str(name) + " is : " + str(node_with_same_name))
+                    if node_with_same_name is not None:
                         rospy.logdebug("recursive call for same name for: " + name)
-                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx,
-                                                             nodewithsamename)
+                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, node_with_same_name)
                     else:
-                        newparent = parent.add_object(
-                            ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
-                            ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
-                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx,
-                                                             newparent)
+                        new_parent = parent.add_object(ua.NodeId(name, parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
+                                                       ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
+                        return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, new_parent)
                 except IndexError, common.uaerrors.UaError:
-                    newparent = parent.add_object(
-                        ua.NodeId(name + str(random.randint(0, 10000)), parent.nodeid.NamespaceIndex,
-                                  ua.NodeIdType.String),
-                        ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
-                    return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx,
-                                                         newparent)
+                    new_parent = parent.add_object(ua.NodeId(name + str(random.randint(0, 10000)), parent.nodeid.NamespaceIndex, ua.NodeIdType.String),
+                                                   ua.QualifiedName(name, parent.nodeid.NamespaceIndex))
+                    return self.recursive_create_objects(ros_server.nextname(hierachy, hierachy.index(name)), idx, new_parent)
         return parent
 
 
     @uamethod
-    def call_service(self, parent, *inputs):
+    def call_service(self, parent, *input_args):
+        rospy.loginfo("Call Service: %s", self.service_name)
+        rospy.logdebug("input_args: %s", str(input_args))
+
+        req, input_idx = self.create_service_request(self.srv_class._request_class(), input_args)
+        rospy.logdebug("Request:\n%s", str(req))
+
         try:
-            rospy.loginfo("Calling Service with name: " + self.name)
-            input_msg = self.create_message_instance(inputs, self.sample_req)
-            rospy.logdebug("Created Input Request for Service " + self.name + " : " + str(input_msg))
-            response = self.proxy(input_msg)
+            res = self.proxy.call(req)
+            rospy.logdebug("Response:\n%s", str(res))
+        except (TypeError, rosservice.ROSServiceException, rospy.ROSInterruptException, rospy.ROSSerializationException) as ex:
+            rospy.logerr("Error when calling service: %s", self.service_name, ex)
+            return
 
-            rospy.logdebug("Got response: " + str(response))
-            rospy.logdebug("Creating response message object")
-            return_values = ros_msg_to_flat_values(response)
-
-            rospy.logdebug("Current Response list: " + str(return_values))
-            return return_values
-        except (TypeError, rospy.ROSException, rospy.ROSInternalException, rospy.ROSSerializationException,
-                common.uaerrors.UaError, rosservice.ROSServiceException) as ex:
-            rospy.logerr("Error when calling service " + self.name, ex)
+        output_args = ros_utils.ros_msg_to_variants(res)
+        rospy.logdebug("output_args: %s", str(output_args))
+        return output_args
 
 
-    def create_message_instance(self, inputs, sample):
-        rospy.logdebug("Creating message for goal call")
-        already_set = []
-        if isinstance(inputs, tuple):
-            arg_counter = 0
-            object_counter = 0
-            while (arg_counter < len(inputs) and object_counter < len(sample.__slots__)):
-                cur_arg = inputs[arg_counter]
-                cur_slot = sample.__slots__[object_counter]
-                real_slot = getattr(sample, cur_slot)
-                rospy.logdebug(
-                    "cur_arg: " + str(cur_arg) + " cur_slot_name: " + str(cur_slot) + " real slot content: " + str(
-                        real_slot))
-                if hasattr(real_slot, '_type'):
-                    rospy.logdebug("We found an object with name " + str(cur_slot) + ", creating it recursively")
-                    already_set, arg_counter = self.create_object_instance(already_set, real_slot, cur_slot,
-                                                                           arg_counter, inputs, sample)
-                    object_counter += 1
-                else:
-                    already_set.append(cur_slot)
-                    # set the attribute in the request
-                    setattr(sample, cur_slot, cur_arg)
-                    arg_counter += 1
-                    object_counter += 1
+    def create_service_request(self, req, input_args, input_idx=0):
+        for slot_name, slot_type in zip(req.__slots__, req._slot_types):
+            slot_value = getattr(req, slot_name)
 
-        return sample
-
-
-    def create_object_instance(self, already_set, object, name, counter, inputs, sample):
-        rospy.loginfo("Create Object Instance Notify")
-        object_counter = 0
-        while (object_counter < len(object.__slots__) and counter < len(inputs)):
-            cur_arg = inputs[counter]
-            cur_slot = object.__slots__[object_counter]
-            real_slot = getattr(object, cur_slot)
-            rospy.loginfo(
-                "cur_arg: " + str(cur_arg) + " cur_slot_name: " + str(cur_slot) + " real slot content: " + str(
-                    real_slot))
-            if hasattr(real_slot, '_type'):
-                rospy.logdebug("Recursive Object found in request/response of service call")
-                already_set, counter = self.create_object_instance(already_set, real_slot, cur_slot, counter, inputs,
-                                                                   sample)
-                object_counter += 1
+            if hasattr(slot_value, '_type'):
+                slot_value, input_idx = self.create_service_request(slot_value, input_args, input_idx)
+                setattr(req, slot_name, slot_value)
             else:
-                already_set.append(cur_slot)
-                setattr(object, cur_slot, cur_arg)
-                object_counter += 1
-                counter += 1
-                # sets the object as an attribute in the request were trying to build
-        setattr(sample, name, object)
-        return already_set, counter
+                arg = input_args[input_idx]
+                setattr(req, slot_name, arg)
+                input_idx += 1
+
+        return req, input_idx
 
 
-    def recursive_delete_nodes(self, node):
+    def recursive_delete_node(self, node):
         # close ros proxy service
         self.proxy.close()
 
         for child in node.get_children():
-            self.recursive_delete_nodes(child)
+            self.recursive_delete_node(child)
 
             if child in self._nodes:
                 del self._nodes[child]
@@ -314,30 +195,3 @@ class OpcUaROSService:
 
         self.server.server.delete_nodes([self.method])
         ros_server.own_rosnode_cleanup()
-
-
-def ros_msg_to_flat_values(msg):
-    array = []
-    for slot_name, slot_type in zip(msg.__slots__, msg._slot_types):
-        rospy.logdebug("converting slot name: '%s' with type: '%s'", slot_name, slot_type)
-        slot_value = getattr(msg, slot_name)
-        if hasattr(slot_value, '_type'):
-            array_to_merge = ros_msg_to_flat_values(slot_value)
-            array.extend(array_to_merge)
-        else:
-            array.append(slot_value)
-
-    return array
-
-
-def extract_array_info(type_str):
-    array_size = None
-    if '[' in type_str and type_str[-1] == ']':
-        type_str, array_size_str = type_str.split('[', 1)
-        array_size_str = array_size_str[:-1]
-        if len(array_size_str) > 0:
-            array_size = int(array_size_str)
-        else:
-            array_size = 0
-
-    return type_str, array_size

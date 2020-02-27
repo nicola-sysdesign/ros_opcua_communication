@@ -1,11 +1,11 @@
 <launch>
-  <env name="ROSCONSOLE_CONFIG_FILE"
-      value="$(find ros_opcua_impl_python_opcua)/rosconsole.config"/>
+  <env name="ROS_PYTHON_LOG_CONFIG_FILE"
+      value="$(find ros_opcua_impl_python_opcua)/python_logging.conf"/>
 
   <node name="rosopcua" pkg="ros_opcua_impl_python_opcua" type="ros_server.py" output="screen">
     <rosparam ns="server" command="load" file="$(find ros_opcua_impl_python_opcua)/config/server.yaml"/>
-    <param name="refresh_frequency" value="0.1"/>
-    <param name="ros_namespace" value="/"/>
+    <rosparam ns="filter" command="load" file="$(find ros_opcua_impl_python_opcua)/config/filter.yaml"/>
+    <param name="refresh_time" value="5.0"/>
   </node>
 
 </launch>

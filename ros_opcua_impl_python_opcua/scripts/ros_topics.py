@@ -1,14 +1,12 @@
-#!/usr/bin/env python
-
 # Thanks to:
 # https://github.com/ros-visualization/rqt_common_plugins/blob/groovy-devel/rqt_topic/src/rqt_topic/topic_widget.py
 import random
 import numpy
 
 import rospy
-import rostopic
 import roslib
 import roslib.message
+import rostopic
 from opcua import ua, uamethod
 
 import ros_server
@@ -16,48 +14,45 @@ import ros_actions
 import ros_utils
 
 
-
 # use to not get dict changed during iteration errors
 def refresh_dict(ros_namespace, ros_server, topics_dict, idx):
-    # get current published topics
-    ros_topics = rospy.get_published_topics(ros_namespace)
+    ros_topics = rospy.get_published_topics(namespace=ros_namespace)
+    topic_names = zip(*ros_topics)[0]
+    topic_types = zip(*ros_topics)[1]
 
     to_be_deleted = []
     for node_name in topics_dict:
-        # search if node_name is in ros_topics
-        found = False
-        for topic_name, topic_type in ros_topics:
-            if node_name == topic_name:
-                found = True
-        # if not found delete it
-        if not found:
+
+        if node_name not in topic_names:
+
             topics_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx)))
+
             to_be_deleted.append(node_name)
 
-    for topic_name in to_be_deleted:
-        del topics_dict[topic_name]
+    for node_name in to_be_deleted:
+        del topics_dict[node_name]
 
 
 def refresh_topics(ros_namespace, ros_server, topics_dict, idx, topics_object):
-    ros_topics = rospy.get_published_topics(ros_namespace)
+    ros_topics = rospy.get_published_topics(namespace=ros_namespace)
 
-    # rospy.logdebug(str(topics))
-    # rospy.logdebug(str(rospy.get_published_topics('/move_base_simple')))
-
+    #
     for topic_name, topic_type in ros_topics:
+
+        if topic_name not in ros_server.filter_topics:
+            continue
 
         if topic_name not in topics_dict or topics_dict[topic_name] is None:
             # splits = topic_name.split('/')
-
             # if splits[-1] not in ["status", "cancel", "goal", "feedback", "result"]:
                 # rospy.loginfo("Ignoring normal topics for debugging...")
             opcua_topic = OpcUaROSTopic(ros_server, topics_object, idx, topic_name, topic_type)
             topics_dict[topic_name] = opcua_topic
 
-        elif number_of_subscribers(topic_name, topics_dict) <= 1 and "rosout" not in node_name:
-            topics_dict[topic_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(topic_name, idx_topics)))
-            del topics_dict[topic_name]
-            ros_server.own_rosnode_cleanup()
+        # elif number_of_subscribers(topic_name, topics_dict) <= 1 and "rosout" not in node_name:
+        #     topics_dict[topic_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(topic_name, idx_topics)))
+        #     del topics_dict[topic_name]
+        #     ros_server.own_rosnode_cleanup()
 
     refresh_dict(ros_namespace, ros_server, topics_dict, idx)
 
@@ -95,7 +90,7 @@ class OpcUaROSTopic:
         self.subscriber = rospy.Subscriber(self.topic_name, roslib.message.get_message_class(topic_type), self.message_callback)
         self.publisher  = rospy.Publisher(self.topic_name, roslib.message.get_message_class(topic_type), queue_size=1)
 
-        rospy.loginfo("Created ROS Topic: '%s'", self.topic_name)
+        rospy.loginfo("Created ROS Topic: %s", self.topic_name)
 
 
     def recursive_create_objects(self, parent, idx, topic_name):
@@ -190,35 +185,16 @@ class OpcUaROSTopic:
 
 
     def message_callback(self, msg):
-        self.update_value(self.topic_name, msg)
+        self.update_node_value(self.topic_name, msg)
 
 
-    @uamethod
-    def opcua_update_callback(self, parent):
-        try:
-            for node_key in self.nodes.keys():
-                child = self.nodes[node_key]
-                name = child.get_display_name().Text
-                if hasattr(self.msg_instance, name):
-                    if child.get_node_class() == ua.NodeClass.Variable:
-                        print child.get_value()
-                        setattr(self.msg_instance, name, child.get_value())
-                        # correct_type(child, type(getattr(self.msg_instance, name))))
-                    elif child.get_node_class() == ua.NodeClass.Object:
-                        setattr(self.msg_instance, name, self.create_msg_instance(child))
-            # publish msg
-            self.publisher.publish(self.msg_instance)
-        except rospy.ROSException as ex:
-            rospy.logerr("Error while updating OPC-UA node: '%s'", self.topic_name, ex)
-            self.server.server.delete_nodes([self.parent])
-
-
-    def update_value(self, node_name, msg):
+    def update_node_value(self, node_name, msg):
 
         if hasattr(msg, '__slots__') and hasattr(msg, '_slot_types'):
             # complex type
             for slot_name, slot_type in zip(msg.__slots__, msg._slot_types):
-                self.update_value(node_name + '/' + slot_name, getattr(msg, slot_name))
+                slot_value = getattr(msg, slot_name)
+                self.update_node_value(node_name + '/' + slot_name, slot_value)
             return
 
         if type(msg) in (list, tuple):
@@ -227,7 +203,7 @@ class OpcUaROSTopic:
                 # complex type array
                 for index, slot in enumerate(msg):
                     if node_name + '[%d]' % index in self.nodes:
-                        self.update_value(node_name + '[%d]' % index, slot)
+                        self.update_node_value(node_name + '[%d]' % index, slot)
                     else:
                         if node_name in self.nodes:
                             base_type_str, array_size = ros_utils.extract_array_info(self.nodes[node_name].text(self.type_name))
@@ -250,29 +226,47 @@ class OpcUaROSTopic:
             node.set_value(dv)
 
 
+    @uamethod
+    def opcua_update_callback(self, parent):
+
+        msg = self.create_msg_instance(parent)
+
+        try:
+            # publish msg
+            self.publisher.publish(msg)
+        except rospy.ROSException as ex:
+            rospy.logerr("Error while updating OPC-UA node: '%s'", self.topic_name, ex)
+            self.server.server.delete_nodes([self.parent])
+
+
+    # Converts the value of the node to that specified in the ros message we are
+    # trying to fill. Casts python ints.
     def create_msg_instance(self, node):
         for child in node.get_children():
-            name = child.get_display_name().Text
-            if hasattr(self.msg_instance, name):
+            display_name = child.get_display_name()
+            slot_name = display_name.Text
+            if hasattr(self.msg_instance, slot_name):
                 if child.get_node_class() == ua.NodeClass.Variable:
-                    setattr(self.msg_instance, name,
-                            correct_type(child, type(getattr(self.msg_instance, name))))
+                    slot_value = correct_type(child, type(getattr(self.msg_instance, name)))
+                    setattr(self.msg_instance, slot_name, slot_value)
+                    rospy.logdebug("updated slot '%s' with value: %s", slot_name, slot_value)
                 elif child.get_node_class == ua.NodeClass.Object:
-                    setattr(self.msg_instance, name, self.create_msg_instance(child))
-        return self.msg_instance  # Converts the value of the node to that specified in the ros message we are trying to fill. Casts python ints
+                    setattr(self.msg_instance, slot_name, self.create_msg_instance(child))
+
+        return self.msg_instance
 
 
 # to unsigned integers as to fulfill ros specification. Currently only uses a few different types,
 # no other types encountered so far.
-def correct_type(node, typemessage):
+def correct_type(node, type_msg):
     data_value = node.get_data_value()
     result = node.get_value()
     if isinstance(data_value, ua.DataValue):
-        if typemessage.__name__ == "float":
+        if type_msg.__name__ == "float":
             result = numpy.float(result)
-        if typemessage.__name__ == "double":
+        if type_msg.__name__ == "double":
             result = numpy.double(result)
-        if typemessage.__name__ == "int":
+        if type_msg.__name__ == "int":
             result = int(result) & 0xff
     else:
         rospy.logerr("can't convert: " + str(node.get_data_value.Value))
@@ -281,48 +275,84 @@ def correct_type(node, typemessage):
 
 
 def create_node_variable(parent, name, qname, type_name):
-    rospy.logdebug("Creating node variable: '%s' with type_name: '%s'", name, type_name)
+    rospy.logdebug("Creating node variable: '%s' of type: '%s'", name, type_name)
 
-    base_type_str, array_size = ros_utils.extract_array_info(type_name)
+    base_type, array_size = ros_utils.extract_array_info(type_name)
 
-    if base_type_str == 'bool':
-        dv = ua.Variant(False, ua.VariantType.Boolean)  if array_size is None else ua.Variant([], ua.VariantType.Boolean)
+    if base_type in ['bool']:
+        if array_size is None:
+            dv = ua.Variant(False, ua.VariantType.Boolean)
+        else:
+            dv = ua.Variant([], ua.VariantType.Boolean)
         dt = ua.NodeId(ua.ObjectIds.Boolean, 0)
-    elif base_type_str == 'int8':
-        dv = ua.Variant(0, ua.VariantType.SByte)        if array_size is None else ua.Variant([], ua.VariantType.SByte)
+    elif base_type in ['int8']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.SByte)
+        else:
+            dv = ua.Variant([], ua.VariantType.SByte)
         dt = ua.NodeId(ua.ObjectIds.SByte, 0)
-    elif base_type_str == 'byte' or base_type_str == 'uint8':
-        dv = ua.Variant(0, ua.VariantType.Byte)         if array_size is None else ua.Variant([], ua.VariantType.Byte)
+    elif base_type in ['byte', 'uint8']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.Byte)
+        else:
+            dv = ua.Variant([], ua.VariantType.Byte)
         dt = ua.NodeId(ua.ObjectIds.Byte, 0)
-    elif base_type_str == 'int16':
-        dv = ua.Variant(0, ua.VariantType.Int16)        if array_size is None else ua.Variant([], ua.VariantType.Int16)
+    elif base_type in ['int16']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.Int16)
+        else:
+            dv = ua.Variant([], ua.VariantType.Int16)
         dt = ua.NodeId(ua.ObjectIds.Int16, 0)
-    elif base_type_str == 'uint16':
-        dv = ua.Variant(0, ua.VariantType.UInt16)       if array_size is None else ua.Variant([], ua.VariantType.UInt16)
+    elif base_type in ['uint16']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.UInt16)
+        else:
+            dv = ua.Variant([], ua.VariantType.UInt16)
         dt = ua.NodeId(ua.ObjectIds.UInt16, 0)
-    elif base_type_str == 'int' or base_type_str == 'int32':
-        dv = ua.Variant(0, ua.VariantType.Int32)        if array_size is None else ua.Variant([], ua.VariantType.Int32)
+    elif base_type in ['int', 'int32']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.Int32)
+        else:
+            dv = ua.Variant([], ua.VariantType.Int32)
         dt = ua.NodeId(ua.ObjectIds.Int32, 0)
-    elif base_type_str == 'uint32':
-        dv = ua.Variant(0, ua.VariantType.UInt32)       if array_size is None else ua.Variant([], ua.VariantType.UInt32)
+    elif base_type in ['uint32']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.UInt32)
+        else:
+            dv = ua.Variant([], ua.VariantType.UInt32)
         dt = ua.NodeId(ua.ObjectIds.UInt32, 0)
-    elif base_type_str == 'int64':
-        dv = ua.Variant(0, ua.VariantType.Int64)        if array_size is None else ua.Variant([], ua.VariantType.Int64)
+    elif base_type in ['int64']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.Int64)
+        else:
+            dv = ua.Variant([], ua.VariantType.Int64)
         dt = ua.NodeId(ua.ObjectIds.Int64, 0)
-    elif base_type_str == 'uint64':
-        dv = ua.Variant(0, ua.VariantType.UInt64)       if array_size is None else ua.Variant([], ua.VariantType.UInt64)
+    elif base_type in ['uint64']:
+        if array_size is None:
+            dv = ua.Variant(0, ua.VariantType.UInt64)
+        else:
+            dv = ua.Variant([], ua.VariantType.UInt64)
         dt = ua.NodeId(ua.ObjectIds.UInt64, 0)
-    elif base_type_str == 'float' or base_type_str == 'float32' or base_type_str == 'float64':
-        dv = ua.Variant(0.0, ua.VariantType.Float)      if array_size is None else ua.Variant([], ua.VariantType.Float)
+    elif base_type in ['float', 'float32', 'float64']:
+        if array_size is None:
+            dv = ua.Variant(0.0, ua.VariantType.Float)
+        else:
+            dv = ua.Variant([], ua.VariantType.Float)
         dt = ua.NodeId(ua.ObjectIds.Float, 0)
-    elif base_type_str == 'double':
-        dv = ua.Variant(0.0, ua.VariantType.Double)     if array_size is None else ua.Variant([], ua.VariantType.Double)
+    elif base_type in ['double']:
+        if array_size is None:
+            dv = ua.Variant(0.0, ua.VariantType.Double)
+        else:
+            dv = ua.Variant([], ua.VariantType.Double)
         dt = ua.NodeId(ua.ObjectIds.Double, 0)
-    elif base_type_str == 'string':
-        dv = ua.Variant('', ua.VariantType.String)      if array_size is None else ua.Variant([], ua.VariantType.String)
+    elif base_type in ['string']:
+        if array_size is None:
+            dv = ua.Variant('', ua.VariantType.String)
+        else:
+            dv = ua.Variant([], ua.VariantType.String)
         dt = ua.NodeId(ua.ObjectIds.String, 0)
     else:
-        rospy.logerr("can't create node with type %s", str(base_type_str))
+        rospy.logerr("Can't create node variable of type '%s'", str(type_name))
         return None
 
     node = parent.add_variable(ua.NodeId(name, parent.nodeid.NamespaceIndex),
