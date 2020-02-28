@@ -144,7 +144,7 @@ class ROSServer:
 
     def stop(self):
         self.server.stop()
-        rospy.loginfo("Stopped OPC-UA Server %s%s", self.endpoint, self.server_name)
+        rospy.loginfo("Stopped OPC-UA Server %s/%s", self.endpoint, self.server_name)
 
 
     def find_service_node_with_same_name(self, name, idx):
