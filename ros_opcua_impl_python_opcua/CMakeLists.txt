@@ -5,6 +5,11 @@ project(ros_opcua_impl_python_opcua)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  rospy
+  roslib
+  rosnode
+  rosservice
+  rostopic
   ros_opcua_msgs
   ros_opcua_srvs
 )
@@ -81,7 +86,8 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ros_opcua_impl_python_opcua
-#  CATKIN_DEPENDS ros_opcua_msgs ros_opcua_srvs
+  CATKIN_DEPENDS rospy roslib rosnode rosservice rostopic 
+  ros_opcua_msgs ros_opcua_srvs
 #  DEPENDS system_lib
 )
 
@@ -122,10 +128,15 @@ include_directories(
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
-# install(PROGRAMS
-#   scripts/my_python_script
-#   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+install(
+  PROGRAMS
+  scripts/ros_server.py
+  scripts/ros_services.py
+  scripts/ros_topics.py
+  scripts/ros_actions.py
+  scripts/ros_utils.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark executables and/or libraries for installation
 # install(TARGETS ros_opcua_impl_python_opcua ros_opcua_impl_python_opcua_node
@@ -142,11 +153,8 @@ include_directories(
 # )
 
 ## Mark other files for installation (e.g. launch and bag files, etc.)
-# install(FILES
-#   # myfile1
-#   # myfile2
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-# )
+install(DIRECTORY config DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(DIRECTORY launch DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 
 #############
 ## Testing ##
