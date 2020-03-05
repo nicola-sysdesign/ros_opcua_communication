@@ -11,9 +11,13 @@ topics:
 services:
   - /ewdl_driver/start_homing
   - /ewdl_driver/start_motion
-  - /moving_node/go
-  - /moving_node/move
-  - /moving_node/stop
-  - /tasking_node/pick
-  - /tasking_node/place
-  - /tasking_node/stop
+  - scene_server/scene
+  - /moving_arm/go
+  - /moving_arm/move
+  - /moving_arm/stop
+  - /moving_full/go
+  - /moving_full/move
+  - /moving_full/stop
+  - /tasking_arm/pick
+  - /tasking_arm/place
+  - /tasking_arm/stop
