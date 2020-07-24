@@ -187,7 +187,11 @@ if __name__ == '__main__':
     server_endpoint = rospy.get_param("~server/endpoint")
     server_name = rospy.get_param("~server/name")
 
-    refresh_time = rospy.get_param("~refresh_time")
+    startup_time = rospy.get_param("~startup_time", 0.0)
+    refresh_time = rospy.get_param("~refresh_time", 10.0)
+
+    # wait that all nodes started up
+    rospy.sleep(startup_time)
 
     # ROS OPC-UA Server
     ros_server = ROSServer(server_endpoint, server_name)
