@@ -15,7 +15,7 @@ import ros_utils
 
 
 # use to not get dict changed during iteration errors
-def refresh_dict(ros_namespace, ros_server, topics_dict, idx):
+def clean_dict(ros_namespace, ros_server, topics_dict, idx, clean_all=False):
     ros_topics = rospy.get_published_topics(namespace=ros_namespace)
     topic_names = zip(*ros_topics)[0]
     topic_types = zip(*ros_topics)[1]
@@ -23,7 +23,7 @@ def refresh_dict(ros_namespace, ros_server, topics_dict, idx):
     to_be_deleted = []
     for node_name in topics_dict:
 
-        if node_name not in topic_names:
+        if (node_name not in topic_names) or (clean_all == True):
 
             topics_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx)))
 
@@ -36,7 +36,6 @@ def refresh_dict(ros_namespace, ros_server, topics_dict, idx):
 def refresh_topics(ros_namespace, ros_server, topics_dict, idx, topics_object):
     ros_topics = rospy.get_published_topics(namespace=ros_namespace)
 
-    #
     for topic_name, topic_type in ros_topics:
 
         if topic_name not in ros_server.filter_topics:
@@ -54,7 +53,7 @@ def refresh_topics(ros_namespace, ros_server, topics_dict, idx, topics_object):
         #     del topics_dict[topic_name]
         #     ros_server.own_rosnode_cleanup()
 
-    refresh_dict(ros_namespace, ros_server, topics_dict, idx)
+    clean_dict(ros_namespace, ros_server, topics_dict, idx)
 
 
 # Used to delete obsolete topics
@@ -181,7 +180,8 @@ class OpcUaROSTopic:
 
         # if parent have no children delete it
         if len(self.parent.get_children()) == 0:
-            self.server.server.delete_nodes([self.parent])
+            if self.parent != self.server.topics_object:
+                self.server.server.delete_nodes([self.parent])
 
 
     def message_callback(self, msg):

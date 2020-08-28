@@ -19,6 +19,7 @@
   <buildtool_depend>catkin</buildtool_depend>
 
   <depend>rospy</depend>
+  <depend>std_srvs</depend>
   <depend>roslib</depend>
   <depend>rosnode</depend>
   <depend>rosservice</depend>

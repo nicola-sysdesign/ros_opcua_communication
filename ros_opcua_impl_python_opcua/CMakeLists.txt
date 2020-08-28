@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.0.2)
 project(ros_opcua_impl_python_opcua)
 
 ## Find catkin macros and libraries
@@ -6,6 +6,7 @@ project(ros_opcua_impl_python_opcua)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   rospy
+  std_srvs
   roslib
   rosnode
   rosservice
@@ -86,7 +87,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ros_opcua_impl_python_opcua
-  CATKIN_DEPENDS rospy roslib rosnode rosservice rostopic 
+  CATKIN_DEPENDS rospy roslib rosnode rosservice rostopic
   ros_opcua_msgs ros_opcua_srvs
 #  DEPENDS system_lib
 )

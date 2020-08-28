@@ -6,6 +6,7 @@ import logging
 import rospy
 import rosgraph
 import rosnode
+import std_srvs.srv
 
 import opcua
 from opcua import ua
@@ -118,7 +119,6 @@ class ROSServer:
         #node.set_value(ua.Variant(0, ua.VariantType))
 
 
-
     def start(self):
         self.server.start()
         rospy.loginfo("Started OPC-UA Server %s/%s", self.endpoint, self.server_name)
@@ -145,6 +145,19 @@ class ROSServer:
     def stop(self):
         self.server.stop()
         rospy.loginfo("Stopped OPC-UA Server %s/%s", self.endpoint, self.server_name)
+
+
+    def refresh(self, clean_all=False):
+        rospy.loginfo("Refreshing OPC-UA Server %s/%s ...", self.endpoint, self.server_name)
+
+        #ros_services.clean_dict(self.ros_namespace, self, self.services_dict, self.idx_services, clean_all)
+        ros_topics.clean_dict(self.ros_namespace, self, self.topics_dict, self.idx_topics, clean_all)
+
+        #ros_services.refresh_services(self.ros_namespace, self, self.services_dict, self.idx_services, self.services_object)
+        ros_topics.refresh_topics(self.ros_namespace, self, self.topics_dict, self.idx_topics, self.topics_object)
+        # ros_actions.refresh_actions(ros_server.ros_namespace, ros_server, ros_server.actions_dict, ros_server.idx_actions, ros_server.actions_object)
+
+        return True
 
 
     def find_service_node_with_same_name(self, name, idx):
@@ -178,6 +191,19 @@ class ROSServer:
 
 
 
+def refresh(req):
+    res = std_srvs.srv.TriggerResponse()
+
+    if ros_server.refresh(clean_all=True):
+        res.success = True
+        res.message = ""
+    else:
+        res.success = False
+        res.message = ""
+
+    return res
+
+
 if __name__ == '__main__':
 
     # Node
@@ -189,6 +215,9 @@ if __name__ == '__main__':
 
     startup_time = rospy.get_param("~startup_time", 0.0)
     refresh_time = rospy.get_param("~refresh_time", 10.0)
+
+    # Services
+    refresh_srv = rospy.Service("~refresh", std_srvs.srv.Trigger, refresh)
 
     # wait that all nodes started up
     rospy.sleep(startup_time)

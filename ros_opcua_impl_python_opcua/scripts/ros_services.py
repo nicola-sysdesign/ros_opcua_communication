@@ -14,13 +14,13 @@ import ros_server
 import ros_utils
 
 
-def refresh_dict(ros_namespace, ros_server, services_dict, idx):
+def clean_dict(ros_namespace, ros_server, services_dict, idx, clean_all=False):
     ros_services = rosservice.get_service_list()
 
     to_be_deleted = []
     for node_name in services_dict:
 
-        if node_name not in ros_services:
+        if (node_name not in ros_services) or (clean_all == True):
 
             services_dict[node_name].recursive_delete_node(ros_server.server.get_node(ua.NodeId(node_name, idx)))
 
@@ -54,7 +54,6 @@ def refresh_dict(ros_namespace, ros_server, services_dict, idx):
 def refresh_services(ros_namespace, ros_server, services_dict, idx, services_object):
     ros_services = rosservice.get_service_list(namespace=ros_namespace)
 
-    #
     for service_name in ros_services:
 
         if service_name not in ros_server.filter_services:
@@ -69,7 +68,7 @@ def refresh_services(ros_namespace, ros_server, services_dict, idx, services_obj
         except TypeError as ex:
             rospy.logerr("Error when logging an Exception, can't convert everything to string")
 
-    refresh_dict(ros_namespace, ros_server, services_dict, idx)
+    clean_dict(ros_namespace, ros_server, services_dict, idx)
 
 
 class OpcUaROSService:
