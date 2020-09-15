@@ -222,6 +222,8 @@ class OpcUaROSTopic:
         # simple type or simple type array
         if node_name in self.nodes and self.nodes[node_name] is not None:
             node = self.nodes[node_name]
+            if type(msg) is tuple:          ##
+                msg = list(msg)             ##
             dv = ua.Variant(msg, node.get_data_type_as_variant_type())
             node.set_value(dv)
 
