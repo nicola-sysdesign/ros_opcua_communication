@@ -227,13 +227,18 @@ if __name__ == '__main__':
     ros_server.start()
 
     # Loop
-    rate = rospy.Rate(1.0/refresh_time)
-    while not rospy.is_shutdown():
+    #rate = rospy.Rate(1.0/refresh_time)
+    #while not rospy.is_shutdown():
         # ros_topics starts a lot of publisher/subscribers, might slow everything down quite a bit.
-        ros_services.refresh_services(ros_server.ros_namespace, ros_server, ros_server.services_dict, ros_server.idx_services, ros_server.services_object)
-        ros_topics.refresh_topics(ros_server.ros_namespace, ros_server, ros_server.topics_dict, ros_server.idx_topics, ros_server.topics_object)
+        #ros_services.refresh_services(ros_server.ros_namespace, ros_server, ros_server.services_dict, ros_server.idx_services, ros_server.services_object)
+        #ros_topics.refresh_topics(ros_server.ros_namespace, ros_server, ros_server.topics_dict, ros_server.idx_topics, ros_server.topics_object)
         # ros_actions.refresh_actions(ros_server.ros_namespace, ros_server, ros_server.actions_dict, ros_server.idx_actions, ros_server.actions_object)
 
-        rate.sleep()
+        #rate.sleep()
+
+    ros_services.refresh_services(ros_server.ros_namespace, ros_server, ros_server.services_dict, ros_server.idx_services, ros_server.services_object)
+    ros_topics.refresh_topics(ros_server.ros_namespace, ros_server, ros_server.topics_dict, ros_server.idx_topics, ros_server.topics_object)
+
+    rospy.spin()
 
     ros_server.stop()
