@@ -38,7 +38,7 @@ def refresh_topics(ros_namespace, ros_server, topics_dict, idx, topics_object):
 
     for topic_name, topic_type in ros_topics:
 
-        if topic_name not in ros_server.filter_topics:
+        if topic_name not in ros_server.topics_whitelist:
             continue
 
         if topic_name not in topics_dict or topics_dict[topic_name] is None:

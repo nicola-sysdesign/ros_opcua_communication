@@ -56,7 +56,7 @@ def refresh_services(ros_namespace, ros_server, services_dict, idx, services_obj
 
     for service_name in ros_services:
 
-        if service_name not in ros_server.filter_services:
+        if service_name not in ros_server.services_whitelist:
             continue
 
         try:

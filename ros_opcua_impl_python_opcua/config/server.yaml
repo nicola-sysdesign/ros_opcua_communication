@@ -4,6 +4,27 @@
 
 endpoint: "opc.tcp://localhost:4840"
   # The endpoint of the server
-
 name: "ROSServer"
   # The name of the server
+
+###################
+## OPC-UA Filter ##
+###################
+
+topics:
+  whitelist:
+    - /joint_states
+services:
+  whitelist:
+    - /ewdl_driver/start_homing
+    - /ewdl_driver/start_motion
+    - scene_server/scene
+    - /moving_arm/go
+    - /moving_arm/move
+    - /moving_arm/stop
+    - /moving_full/go
+    - /moving_full/move
+    - /moving_full/stop
+    - /tasking_arm/pick
+    - /tasking_arm/place
+    - /tasking_arm/stop

@@ -26,8 +26,8 @@ def nextname(hierachy, index_of_last_processed):
             output += hierachy[counter]
             counter += 1
         return output
-    except Exception as e:
-        rospy.logerr("Error encountered ", e)
+    except Exception as ex:
+        rospy.logerr("Error encountered ", ex)
 
 
 def own_rosnode_cleanup():
@@ -46,14 +46,13 @@ class ROSServer:
         self.server_name = server_name
 
         self.ros_namespace = rospy.get_param("~ros_namespace", '/')
-        self.topics_dict = {}
         self.services_dict = {}
+        self.topics_dict = {}
         self.actions_dict = {}
 
-        #
-        self.filter_services = rospy.get_param("~filter/services")
-        self.filter_topics = rospy.get_param("~filter/topics")
-
+        # whitelist
+        self.services_whitelist = rospy.get_param("~services/whitelist")
+        self.topics_whitelist = rospy.get_param("~topics/whitelist")
 
         self.server = opcua.Server()
         self.server.set_endpoint(endpoint)
@@ -125,8 +124,6 @@ class ROSServer:
 
         self.server_config(self.server)
 
-        # setup our own namespaces, this is expected
-        # two different namespaces to make getting the correct node easier for get_node (otherwise had object for service and topic with same name
         uri_topics = "http://ros.org/topics"
         uri_services = "http://ros.org/services"
         uri_actions = "http://ros.org/actions"
@@ -134,9 +131,7 @@ class ROSServer:
         self.idx_services = self.server.register_namespace(uri_services)
         self.idx_actions = self.server.register_namespace(uri_actions)
 
-        # get Objects node, this is where we should put our custom stuff
         objects = self.server.get_objects_node()
-        # one object per type we are watching
         self.topics_object = objects.add_folder(self.idx_topics, "ROS-Topics")
         self.services_object = objects.add_folder(self.idx_services, "ROS-Services")
         self.actions_object = objects.add_folder(self.idx_actions, "ROS-Actions")
@@ -190,20 +185,6 @@ class ROSServer:
         return None
 
 
-
-def refresh(req):
-    res = std_srvs.srv.TriggerResponse()
-
-    if ros_server.refresh(clean_all=True):
-        res.success = True
-        res.message = ""
-    else:
-        res.success = False
-        res.message = ""
-
-    return res
-
-
 if __name__ == '__main__':
 
     # Node
@@ -216,25 +197,11 @@ if __name__ == '__main__':
     startup_time = rospy.get_param("~startup_time", 0.0)
     refresh_time = rospy.get_param("~refresh_time", 10.0)
 
-    # Services
-    refresh_srv = rospy.Service("~refresh", std_srvs.srv.Trigger, refresh)
-
-    # wait that all nodes started up
     rospy.sleep(startup_time)
 
     # ROS OPC-UA Server
     ros_server = ROSServer(server_endpoint, server_name)
     ros_server.start()
-
-    # Loop
-    #rate = rospy.Rate(1.0/refresh_time)
-    #while not rospy.is_shutdown():
-        # ros_topics starts a lot of publisher/subscribers, might slow everything down quite a bit.
-        #ros_services.refresh_services(ros_server.ros_namespace, ros_server, ros_server.services_dict, ros_server.idx_services, ros_server.services_object)
-        #ros_topics.refresh_topics(ros_server.ros_namespace, ros_server, ros_server.topics_dict, ros_server.idx_topics, ros_server.topics_object)
-        # ros_actions.refresh_actions(ros_server.ros_namespace, ros_server, ros_server.actions_dict, ros_server.idx_actions, ros_server.actions_object)
-
-        #rate.sleep()
 
     ros_services.refresh_services(ros_server.ros_namespace, ros_server, ros_server.services_dict, ros_server.idx_services, ros_server.services_object)
     ros_topics.refresh_topics(ros_server.ros_namespace, ros_server, ros_server.topics_dict, ros_server.idx_topics, ros_server.topics_object)
